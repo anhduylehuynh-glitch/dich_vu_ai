@@ -1,4 +1,10 @@
 import os
+
+# --- CẤU HÌNH MÔI TRƯỜNG CHO ONNX VÀ RENDER (Phải đặt trên cùng trước khi import YOLO) ---
+os.environ["OMP_NUM_THREADS"] = "1"         # Giới hạn thread của ONNX Runtime, tránh tràn CPU trên Render
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"  # Ép YOLO lưu cache/font vào thư mục /tmp để tránh lỗi ghi quyền
+os.environ["PYTHONPYCACHEPREFIX"] = "/tmp/pycache"
+
 import gc
 import torch
 from flask import Flask, request, jsonify
@@ -7,11 +13,11 @@ from PIL import Image
 
 app = Flask(__name__)
 
-# Khống chế chặt chẽ tài nguyên hệ thống (Tránh sinh đa tiến trình tốn RAM)
+# Khống chế tài nguyên PyTorch hệ thống (Đề phòng backend phụ)
 torch.set_num_threads(1)
 
-# Tải model toàn cục
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'best.pt')
+# Tải model ONNX toàn cục
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'best.onnx')
 model = YOLO(MODEL_PATH)
 
 @app.route('/predict', methods=['POST'])
@@ -31,16 +37,16 @@ def predict():
         if img.mode == 'RGBA':
             img = img.convert('RGB')
             
-        # Ép chuẩn ma trận 640x640 giống hệt như file detect.py để đảm bảo độ chính xác
+        # Ép chuẩn ma trận 640x640 giống hệt lúc train để đảm bảo độ chính xác cực đại cho CCCD
         img_resized = img.resize((640, 640))
         
-        # Chạy dự đoán với độ phân giải chuẩn của model tuyển sinh
+        # Chạy dự đoán với độ phân giải chuẩn của mô hình
         results = model(
             img_resized, 
-            imgsz=640,      # BẮT BUỘC ĐỂ 640 để YOLO nhận diện được chữ nhỏ trên CCCD
+            imgsz=640,      # BẮT BUỘC ĐỂ 640 để YOLO nhận diện được chữ/khung nhỏ trên CCCD
             conf=0.35, 
             verbose=False, 
-            device='cpu'
+            device='cpu'    # Chạy bằng CPU dựa trên ONNX Runtime cực nhẹ
         )
         
         detections = []
@@ -64,7 +70,7 @@ def predict():
             "detections": detections
         }
         
-        # Thu dọn rác và giải phóng bộ nhớ đệm ngay lập tức
+        # Thu dọn rác và giải phóng bộ nhớ đệm ngay lập tức để tiết kiệm RAM tối đa cho Render
         del img
         del img_resized
         del results
