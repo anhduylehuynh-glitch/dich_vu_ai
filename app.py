@@ -41,4 +41,5 @@ def predict():
         return jsonify({"success": False, "message": str(e)}), 500
 
 if __name__ == '__main__':
+    # Chạy mạng nội bộ cổng 5000 phía sau máy chủ Rails
     app.run(host='127.0.0.1', port=5000, debug=False)
