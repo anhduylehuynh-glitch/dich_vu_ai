@@ -7,7 +7,7 @@ from PIL import Image
 
 app = Flask(__name__)
 
-# Khống chế chặt chẽ tài nguyên hệ thống
+# Khống chế chặt chẽ tài nguyên hệ thống (Tránh sinh đa tiến trình tốn RAM)
 torch.set_num_threads(1)
 
 # Tải model toàn cục
@@ -16,7 +16,6 @@ model = YOLO(MODEL_PATH)
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    # SỬA TÊN KEY THÀNH 'filecccdt' ĐỂ KHỚP VỚI RAILS GỬI LÊN
     if 'filecccdt' not in request.files:
         return jsonify({"success": False, "message": "Không tìm thấy key 'filecccdt' trong dữ liệu gửi lên"}), 400
         
@@ -25,13 +24,20 @@ def predict():
         return jsonify({"success": False, "message": "Tên file rỗng"}), 400
 
     try:
-        # Đọc ảnh trực tiếp từ stream để tránh ghi file xuống ổ đĩa gây tốn tài nguyên
-        img = Image.open(file.stream).convert('RGB')
+        # Đọc ảnh trực tiếp từ bộ nhớ đệm
+        img = Image.open(file.stream)
         
-        # Cấu hình giảm tải RAM tối đa khi Predict
+        # Chuyển đổi sang hệ màu RGB nếu ảnh tải lên là dạng RGBA (tránh lỗi kênh Alpha)
+        if img.mode == 'RGBA':
+            img = img.convert('RGB')
+            
+        # Ép chuẩn ma trận 640x640 giống hệt như file detect.py để đảm bảo độ chính xác
+        img_resized = img.resize((640, 640))
+        
+        # Chạy dự đoán với độ phân giải chuẩn của model tuyển sinh
         results = model(
-            img, 
-            imgsz=256,      # Giảm kích thước ảnh xuống 256 để chạy nhẹ hơn nữa
+            img_resized, 
+            imgsz=640,      # BẮT BUỘC ĐỂ 640 để YOLO nhận diện được chữ nhỏ trên CCCD
             conf=0.35, 
             verbose=False, 
             device='cpu'
@@ -58,16 +64,17 @@ def predict():
             "detections": detections
         }
         
-        # Ép giải phóng bộ nhớ triệt để ngay khi có kết quả
+        # Thu dọn rác và giải phóng bộ nhớ đệm ngay lập tức
         del img
+        del img_resized
         del results
         gc.collect()
         
         return jsonify(output_data)
 
     except Exception as e:
-        # Trả về chi tiết lỗi cụ thể thay vì trả trang HTML 500 mặc định
-        return jsonify({"success": False, "message": f"Lỗi xử lý tại Flask: {str(e)}"}), 200
+        return jsonify({"success": False, "message": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
